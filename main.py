@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from starlette import status
+import asyncio
 
 app = FastAPI()
 
@@ -20,6 +21,7 @@ users =[]
 
 @app.post("/tasks")
 async def create_task(task: Task):
+    await asyncio.sleep(1)
     tasks.append(task)
     return {"message": "Task created successfully", "task": task}
 
@@ -47,6 +49,7 @@ async def get_user(username: str):
 
 @app.get("/tasks")
 async def get_tasks():
+    await asyncio.sleep(0.5)
     return {"tasks": tasks}
 
 @app.get("/tasks/titles", response_model=list[TaskPublic])
