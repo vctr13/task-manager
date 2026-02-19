@@ -7,3 +7,7 @@
 # Кэш Python
 __pycache__/
 *.pyc
+
+# Временные файлы / утилиты
+service_tools.py
+structure.txt
