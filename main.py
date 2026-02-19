@@ -1,43 +1,87 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from starlette import status
 import asyncio
+from sqlalchemy.orm import Session
+
+from database import SessionLocal
+from repository import TaskRepository
+
 
 app = FastAPI()
 
+# --- Модели данных (Pydantic) ---
 class Task(BaseModel):
     title: str
     description: str | None = None
 
 class TaskPublic(BaseModel):
+    id: int
     title: str
+    description: str | None = None
+
+    class Config:
+        from_attributes = True # Позволяет Pydantic читать данные
 
 class User(BaseModel):
     username: str
     email: str
 
-tasks = []
-users =[]
+# Временные хранилища (users пока оставляем в памяти, задачи переносим в БД)
+users = []
 
-@app.post("/tasks")
-async def create_task(task: Task):
+# --- Зависимость для работы с БД ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# --- Эндпоинты для задач (CRUD через PostgreSQL) ---
+
+@app.post("/tasks", response_model=TaskPublic, status_code=status.HTTP_201_CREATED)
+async def create_task(task: Task, db: Session = Depends(get_db)):
+    # Имитация асинхронности
     await asyncio.sleep(1)
-    tasks.append(task)
-    return {"message": "Task created successfully", "task": task}
 
-@app.post("/tasks/{task_id}/complete")
-async def complete_task(task_id: int):
-    if not (0 <= task_id < len(tasks)):
+    repo = TaskRepository(db)
+    # Создаем задачу через репозиторий
+    new_task = repo.add(title=task.title, description=task.description)
+    # Сохраняем изменения в базу (Unit of Work)
+    db.commit()
+    # Обновляем объект, чтобы получить ID, сгенерированный базой
+    db.refresh(new_task)
+    return new_task
+
+
+@app.get("/tasks/{task_id}", response_model=TaskPublic)
+async def get_single_task(task_id: int, db: Session = Depends(get_db)):
+    repo = TaskRepository(db)
+    task = repo.get_by_id(task_id)
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    current_task = tasks[task_id]
-    if not current_task.title.startswith("[DONE] "):
-        current_task.title = f"[DONE] {current_task.title}"
-    return {"message": "Task marked as completed", "task": current_task}
+    return task
+
+
+@app.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(task_id: int, db: Session = Depends(get_db)):
+    repo = TaskRepository(db)
+    success = repo.delete(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    db.commit()  # Не забываем зафиксировать удаление в БД
+    return None
+
+
+# --- Эндпоинты для пользователей (пока без БД, как и было) ---
 
 @app.post("/users")
 async def great_user(user: User):
     users.append(user)
     return {"message": f"Hello, {user.username}!"}
+
 
 @app.get("/users/{username}")
 async def get_user(username: str):
@@ -45,33 +89,3 @@ async def get_user(username: str):
         if user.username == username:
             return user
     raise HTTPException(status_code=404, detail="User not found")
-
-
-@app.get("/tasks")
-async def get_tasks():
-    await asyncio.sleep(0.5)
-    return {"tasks": tasks}
-
-@app.get("/tasks/titles", response_model=list[TaskPublic])
-async def get_task_titles():
-    return tasks
-
-@app.get("/tasks/{task_id}")
-async def get_single_task(task_id: int):
-    if task_id >= len(tasks):
-        raise HTTPException(status_code=404, detail="Task not found")
-    return tasks[task_id]
-
-@app.put("/tasks/{task_id}", response_model=Task)
-async def update_task(task_id: int, updated_task: Task):
-    if task_id >= len(tasks):
-        raise HTTPException(status_code=404, detail="Task not found")
-    tasks[task_id] = updated_task
-    return updated_task
-
-@app.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(task_id: int):
-    if task_id >= len(tasks):
-        raise HTTPException(status_code=404, detail="Task not found")
-    tasks.pop(task_id)
-    return None
